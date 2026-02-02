@@ -1,0 +1,5 @@
+{
+  "name": "Veritas Engine",
+  "description": "An advanced forensic AI system that determines if a news article is fake or real using deep credibility analysis.",
+  "requestFramePermissions": []
+}
