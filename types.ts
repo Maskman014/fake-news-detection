@@ -1,3 +1,8 @@
+export interface GroundingSource {
+  uri: string;
+  title: string;
+}
+
 export interface AnalysisResult {
   credibilityScore: number;
   biasScore: 'Low' | 'Medium' | 'High';
@@ -11,6 +16,7 @@ export interface AnalysisResult {
   loadedLanguageExamples: string[];
   reliabilityReasoning: string;
   sourceQuality: 'High' | 'Mixed' | 'Low' | 'Unverifiable';
+  groundingSources: GroundingSource[];
 }
 
 export interface HistoryItem {

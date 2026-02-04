@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { SYSTEM_INSTRUCTION } from "../constants";
-import { AnalysisResult } from "../types";
+import { AnalysisResult, GroundingSource } from "../types";
 
 const responseSchema: Schema = {
   type: Type.OBJECT,
@@ -52,12 +52,12 @@ const responseSchema: Schema = {
     },
     reliabilityReasoning: {
       type: Type.STRING,
-      description: "Explanation of source reputation and missing/unverifiable references.",
+      description: "Explanation of why the verdict was reached, citing specific search findings.",
     },
     sourceQuality: {
       type: Type.STRING,
       enum: ["High", "Mixed", "Low", "Unverifiable"],
-      description: "Assessment of source reputation.",
+      description: "Assessment of source verification quality.",
     }
   },
   required: [
@@ -83,10 +83,17 @@ export const analyzeContent = async (url: string): Promise<AnalysisResult> => {
 
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  // Using gemini-3-pro-preview for deep reasoning capabilities required for bias/logic analysis
   const modelId = "gemini-3-pro-preview";
 
-  const prompt = `Analyze the news article at this URL: ${url}. If you cannot access the full text, analyze the URL structure, domain reputation, and any available metadata or snippets known about this source to determine if it is fake or real news.`;
+  const prompt = `AUDIT REQUEST: Verify the truthfulness of this article: ${url}
+  
+  MANDATORY SEARCH TASKS:
+  1. Search for: "[Article Headline] fact check"
+  2. Search for: "[Main Claim] debunked"
+  3. Search for: "Is [URL Domain] a reliable source?"
+  4. Find at least two independent sources (like AP, Reuters, or specialized fact-checkers) that confirm or deny these claims.
+  
+  Do not summarize the article. CHALLENGE it. If the official source is the ONLY one reporting it, mark it as Questionable.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -96,8 +103,8 @@ export const analyzeContent = async (url: string): Promise<AnalysisResult> => {
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: responseSchema,
-        thinkingConfig: { thinkingBudget: 2048 }, // Allow some thinking for complex bias detection
-        tools: [{ googleSearch: {} }], // Use search for URL analysis
+        thinkingConfig: { thinkingBudget: 4096 }, // Increased thinking budget for deeper reasoning
+        tools: [{ googleSearch: {} }],
       },
     });
 
@@ -106,11 +113,31 @@ export const analyzeContent = async (url: string): Promise<AnalysisResult> => {
       throw new Error("Empty response from AI model.");
     }
 
+    const groundingSources: GroundingSource[] = [];
+    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (chunks) {
+      chunks.forEach((chunk: any) => {
+        if (chunk.web && chunk.web.uri) {
+          groundingSources.push({
+            uri: chunk.web.uri,
+            title: chunk.web.title || "External Source"
+          });
+        }
+      });
+    }
+
+    const uniqueSources = Array.from(new Set(groundingSources.map(s => s.uri)))
+      .map(uri => groundingSources.find(s => s.uri === uri)!);
+
     try {
-      return JSON.parse(text) as AnalysisResult;
+      const parsed = JSON.parse(text) as AnalysisResult;
+      return {
+        ...parsed,
+        groundingSources: uniqueSources
+      };
     } catch (parseError) {
       console.error("JSON Parse Error:", parseError, text);
-      throw new Error("Failed to parse analysis results.");
+      throw new Error("Analysis failed. The model returned invalid data.");
     }
 
   } catch (error) {
